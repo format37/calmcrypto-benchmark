@@ -2,7 +2,7 @@
 
 A cryptocurrency signal evaluation tool that fetches trading data from Grafana/VictoriaMetrics, calculates predictive metrics, and generates interactive benchmark reports.
 
-**[📊 Report Demo (SOL)](https://format37.github.com/calmcrypto-benchmark/assets/sol_signal_benchmark_report.html)**
+**[📊 Report Demo (SOL)](https://format37.github.io/calmcrypto-benchmark/assets/sol_signal_benchmark_report.html)**
 
 ## Installation
 
