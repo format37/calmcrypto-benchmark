@@ -1,0 +1,8 @@
+requests
+pandas
+numpy
+matplotlib
+plotly
+statsmodels
+scipy
+python-dotenv

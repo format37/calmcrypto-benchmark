@@ -1,0 +1,20 @@
+# Environment variables
+.env
+
+# Output directories
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+CLAUDE.md
