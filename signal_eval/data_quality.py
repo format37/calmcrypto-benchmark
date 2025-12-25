@@ -18,7 +18,8 @@ SIGNAL_RULES = {
 }
 
 # Signals to skip anomaly detection (derived signals have expected high variance)
-SKIP_ANOMALY_CHECK = {'momentum', 'zscore', 'ratio'}
+# Also skip difference-based signals that cross zero (pct change is meaningless)
+SKIP_ANOMALY_CHECK = {'momentum', 'zscore', 'ratio', 'net_flow', 'funding'}
 
 
 @dataclass
