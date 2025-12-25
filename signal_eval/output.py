@@ -214,6 +214,61 @@ class OutputManager:
         self.saved_files.append(str(filepath))
         return str(filepath)
 
+    def save_quality_report(
+        self,
+        quality_report: 'QualityReport'
+    ) -> tuple:
+        """
+        Save data quality report to CSV files.
+
+        Args:
+            quality_report: QualityReport from DataQualityChecker
+
+        Returns:
+            Tuple of (summary_path, issues_path or None)
+        """
+        if self.run_dir is None:
+            self.create_run_directory()
+
+        # Summary CSV - one row per signal
+        summary_rows = []
+        for name, report in quality_report.signals.items():
+            summary_rows.append({
+                'signal_name': name,
+                'total_rows': report.total_rows,
+                'nan_count': report.nan_count,
+                'nan_pct': round(report.nan_pct, 2),
+                'gap_count': report.gap_count,
+                'stale_periods': report.stale_periods,
+                'anomaly_count': report.anomaly_count,
+                'passed': report.passed
+            })
+
+        summary_path = self.run_dir / "data_quality_summary.csv"
+        pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
+        self.saved_files.append(str(summary_path))
+
+        # Issues CSV - one row per issue (only if issues exist)
+        all_issues = []
+        for name, report in quality_report.signals.items():
+            for issue in report.issues:
+                all_issues.append({
+                    'signal_name': issue.signal,
+                    'issue_type': issue.issue_type,
+                    'severity': issue.severity,
+                    'timestamp': issue.timestamp,
+                    'message': issue.message,
+                    'value': issue.value
+                })
+
+        issues_path = None
+        if all_issues:
+            issues_path = self.run_dir / "data_quality_issues.csv"
+            pd.DataFrame(all_issues).to_csv(issues_path, index=False)
+            self.saved_files.append(str(issues_path))
+
+        return str(summary_path), str(issues_path) if issues_path else None
+
     def get_output_summary(self) -> Dict[str, Any]:
         """Get summary of saved files."""
         return {
@@ -230,7 +285,8 @@ def save_evaluation_results(
     include_rolling: bool = False,
     asset: Optional[str] = None,
     data_hours: Optional[int] = None,
-    step: Optional[str] = None
+    step: Optional[str] = None,
+    quality_report: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
     Save all evaluation results to CSV files.
@@ -243,6 +299,7 @@ def save_evaluation_results(
         asset: Asset symbol for metadata (e.g., "BTC")
         data_hours: Hours of data for metadata
         step: Data step interval for metadata
+        quality_report: Optional QualityReport from DataQualityChecker
 
     Returns:
         Dict with output summary
@@ -289,5 +346,9 @@ def save_evaluation_results(
             rolling_df = result['rolling_data']
             if not rolling_df.empty:
                 output.save_rolling_data(signal_name, rolling_df)
+
+    # Save quality report if provided
+    if quality_report is not None:
+        output.save_quality_report(quality_report)
 
     return output.get_output_summary()

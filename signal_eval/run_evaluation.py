@@ -21,6 +21,7 @@ from .evaluator import SignalEvaluator
 from .output import save_evaluation_results
 from .report import generate_report
 from .loader import load_from_output
+from .data_quality import DataQualityChecker
 
 
 def parse_args():
@@ -225,6 +226,12 @@ def main():
 
     rankings = evaluator.evaluate_all()
 
+    # Data quality checks
+    print("\nRunning data quality checks...")
+    quality_checker = DataQualityChecker()
+    quality_report = quality_checker.check_all(registry.all_signals(), price)
+    quality_checker.print_summary(quality_report)
+
     # Save results
     print("\nSaving results...")
     output_summary = save_evaluation_results(
@@ -234,7 +241,8 @@ def main():
         include_rolling=args.include_rolling,
         asset=config.asset,
         data_hours=config.data_hours,
-        step=config.step
+        step=config.step,
+        quality_report=quality_report
     )
 
     # Print summary
