@@ -2,8 +2,12 @@
 
 A cryptocurrency signal evaluation tool that fetches trading data from Grafana/VictoriaMetrics, calculates predictive metrics, and generates interactive benchmark reports.
 
-**[📈 Multi-Asset Report Demo](https://format37.github.io/calmcrypto-benchmark/assets/multi_asset_benchmark_report.html)**  
+**[📈 Multi-Asset Report Demo](https://format37.github.io/calmcrypto-benchmark/assets/multi_asset_benchmark_report.html)**
 **[📊 Single Asset Report Demo (OXT)](https://format37.github.io/calmcrypto-benchmark/assets/oxt_signal_benchmark_report.html)**
+
+## MCP Server
+
+An MCP (Model Context Protocol) server is available for programmatic access to signal evaluation and price prediction tools. See [mcp/README.md](mcp/README.md) for setup and usage.
 
 ## Installation
 
