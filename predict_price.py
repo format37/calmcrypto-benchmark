@@ -200,8 +200,8 @@ def main():
     parser.add_argument('asset', help='Asset symbol (e.g., BTC, ETH, SOL)')
     parser.add_argument('--top-n', type=int, default=5,
                         help='Number of top signals to use (default: 5)')
-    parser.add_argument('--days', type=int, default=7,
-                        help='Days of historical data (default: 7)')
+    parser.add_argument('--days', type=int, default=14,
+                        help='Days of historical data (default: 14)')
     parser.add_argument('--output-dir', type=str, default='output',
                         help='Output directory for JSON file')
 
@@ -215,6 +215,8 @@ def main():
     except ValueError as e:
         print(f"Error: {e}")
         print("This asset may not have complete data available.")
+        if args.days < 14:
+            print(f"Try with more days: python predict_price.py {args.asset} --days 14")
         return
 
     # Print to console
