@@ -68,6 +68,21 @@ python benchmark_all_assets.py --days 14
 
 Ranks all assets by signal predictability and generates `output/asset_benchmark_summary.csv` and `output/multi_asset_benchmark_report.html`.
 
+### Predict Price Direction
+
+```bash
+# Predict BTC price direction
+python predict_price.py BTC
+
+# Use more signals for prediction
+python predict_price.py ETH --top-n 10
+
+# Custom historical data period
+python predict_price.py SOL --days 21
+```
+
+Predicts price direction (UP/DOWN) with probability for 1h, 12h, and 24h timeframes. Outputs to console and saves JSON to `output/prediction_{ASSET}.json`.
+
 ### Generate Interactive Report
 
 ```bash
@@ -237,6 +252,7 @@ calmcrypto/
 ├── dashboard.py           # Grafana API client
 ├── list_assets.py         # List available assets
 ├── benchmark_all_assets.py # Multi-asset benchmark
+├── predict_price.py       # Price direction prediction
 ├── fetch.py               # Minimal API wrapper
 ├── calmcrypto_plot.py     # Original visualization script
 ├── signal_eval/           # Signal evaluation package
