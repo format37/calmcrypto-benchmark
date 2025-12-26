@@ -44,6 +44,14 @@ python -m signal_eval.run_evaluation --asset SOL
 python -m signal_eval.run_evaluation --days 14 --top-n 15 --asset BTC --report
 ```
 
+### List Available Assets
+
+```bash
+python list_assets.py
+```
+
+Fetches all available assets from the Grafana API and saves them to `output/available_assets.csv`.
+
 ### Generate Interactive Report
 
 ```bash
@@ -211,6 +219,7 @@ https://grafana.calmcrypto.app/api/datasources     # List data sources
 calmcrypto/
 ├── .env.example           # Environment template
 ├── dashboard.py           # Grafana API client
+├── list_assets.py         # List available assets
 ├── fetch.py               # Minimal API wrapper
 ├── calmcrypto_plot.py     # Original visualization script
 ├── signal_eval/           # Signal evaluation package
