@@ -1,0 +1,521 @@
+"""
+CalmCrypto MCP service utilities.
+
+Provides common utilities for MCP tools including CSV response formatting,
+Python evaluation, tool notes, and request logging.
+"""
+
+import pathlib
+from typing import Any, Dict
+import pandas as pd
+import json
+import logging
+import io
+import sys
+import time
+import uuid
+import traceback
+import signal
+import os
+from datetime import datetime, timezone
+from contextlib import redirect_stdout, redirect_stderr
+from request_logger import log_request
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def infer_better_type(series):
+    """Infer a more descriptive data type for a pandas Series."""
+    non_null = series.dropna()
+
+    if len(non_null) == 0:
+        return "string (empty)"
+
+    dtype_str = str(series.dtype)
+
+    if 'int' in dtype_str:
+        return dtype_str
+    if 'float' in dtype_str:
+        return dtype_str
+    if 'bool' in dtype_str:
+        return 'boolean'
+    if 'datetime' in dtype_str:
+        return 'datetime'
+
+    if dtype_str == 'object':
+        if non_null.isin([0, 1, '0', '1', True, False, 'True', 'False', 'true', 'false']).all():
+            return 'boolean'
+
+        try:
+            converted = pd.to_numeric(non_null, errors='raise')
+            if (converted == converted.astype(int)).all():
+                return 'integer'
+        except (ValueError, TypeError):
+            pass
+
+        try:
+            pd.to_numeric(non_null, errors='raise')
+            return 'float'
+        except (ValueError, TypeError):
+            pass
+
+        try:
+            pd.to_datetime(non_null, errors='raise')
+            return 'datetime'
+        except (ValueError, TypeError):
+            pass
+
+        return 'string'
+
+    return dtype_str
+
+
+def _posix_time_limit(seconds: float):
+    """POSIX-only wall clock timeout using signals; noop elsewhere."""
+    class _TL:
+        def __enter__(self_):
+            self_.posix = (os.name == "posix" and hasattr(signal, "setitimer"))
+            if not self_.posix:
+                return
+            self_.old_handler = signal.getsignal(signal.SIGALRM)
+            def _raise(_sig, _frm):
+                raise TimeoutError("time limit exceeded")
+            signal.signal(signal.SIGALRM, _raise)
+            signal.setitimer(signal.ITIMER_REAL, float(seconds))
+        def __exit__(self_, exc_type, exc, tb):
+            if self_.posix:
+                signal.setitimer(signal.ITIMER_REAL, 0.0)
+                signal.signal(signal.SIGALRM, self_.old_handler)
+            return False
+    return _TL()
+
+
+def format_csv_response(filepath: pathlib.Path, df: Any) -> str:
+    """
+    Generate standardized response format for CSV data files.
+
+    Args:
+        filepath: Path to the saved CSV file
+        df: DataFrame that was saved
+
+    Returns:
+        Formatted string with file info, schema, sample data, and Python snippet
+    """
+    try:
+        # Get file size
+        file_size_bytes = filepath.stat().st_size
+
+        if file_size_bytes < 1024:
+            size_str = f"{file_size_bytes} bytes"
+        elif file_size_bytes < 1024 * 1024:
+            size_str = f"{file_size_bytes / 1024:.1f} KB"
+        else:
+            size_str = f"{file_size_bytes / (1024 * 1024):.1f} MB"
+
+        filename = filepath.name
+
+        # Build schema JSON with inferred types
+        schema = {col: infer_better_type(df[col]) for col in df.columns}
+        schema_json = json.dumps(schema, indent=2)
+
+        # Generate sample data (first row) as markdown table
+        if len(df) > 0:
+            sample_df = df.head(1)
+            headers = list(sample_df.columns)
+            values = [str(v) for v in sample_df.iloc[0].values]
+            values = [v[:50] + "..." if len(v) > 50 else v for v in values]
+
+            header_row = "| " + " | ".join(headers) + " |"
+            separator = "|" + "|".join(["-" * (len(h) + 2) for h in headers]) + "|"
+            value_row = "| " + " | ".join(values) + " |"
+
+            sample_table = f"{header_row}\n{separator}\n{value_row}"
+        else:
+            sample_table = "(empty dataset)"
+
+        # Create Python snippet
+        python_snippet = f"""import pandas as pd
+df = pd.read_csv('data/mcp-calmcrypto/{filename}')
+print(df.info())
+print(df.head())"""
+
+        # Build final response
+        response = f"""Data saved to CSV
+
+File: {filename}
+Rows: {len(df)}
+Size: {size_str}
+
+Schema (JSON):
+{schema_json}
+
+Sample (first row):
+{sample_table}
+
+Python snippet to load:
+```python
+{python_snippet}
+```"""
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error in format_csv_response: {str(e)}")
+        raise
+
+
+def register_py_eval(local_mcp_instance, csv_dir, requests_dir):
+    """Register the py_eval tool for Python code execution"""
+    @local_mcp_instance.tool()
+    def py_eval(requester: str, code: str, timeout_sec: float = 5.0) -> Dict[str, Any]:
+        """
+        Execute Python code with data science libraries pre-loaded.
+
+        Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'analyst', 'user-alex').
+                Used for request logging and audit purposes.
+            code (str): Python code to execute
+            timeout_sec (float): Execution timeout in seconds (default: 5.0)
+
+        Returns:
+            dict: Execution results with stdout, stderr, duration_ms, and error info
+
+        Available libraries in execution environment:
+
+        Data Processing:
+            - pd: pandas library
+            - np: numpy library
+            - CSV_PATH: path to data/mcp-calmcrypto folder for reading/writing CSV files
+
+        Usage examples:
+
+            # Read a CSV file
+            df = pd.read_csv(f'{CSV_PATH}/available_assets_abc123.csv')
+            print(df.head())
+
+            # Analyze prediction results
+            import json
+            with open(f'{CSV_PATH}/prediction_BTC_xyz789.json') as f:
+                pred = json.load(f)
+            print(pred['predictions'])
+
+            # List all CSV files
+            import os
+            files = [f for f in os.listdir(CSV_PATH) if f.endswith('.csv')]
+            print(files)
+
+        Note:
+            - Code runs in an isolated environment
+            - Use print() to output results
+            - CSV_PATH points to data/mcp-calmcrypto folder
+        """
+        logger.info(f"py_eval invoked by {requester} with {len(code)} characters of code")
+
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        started = time.time()
+
+        try:
+            import pandas as pd
+            import numpy as np
+
+            env = {
+                "__builtins__": __builtins__,
+                "pd": pd,
+                "np": np,
+                "CSV_PATH": str(csv_dir),
+            }
+
+            with redirect_stdout(buf_out), redirect_stderr(buf_err), _posix_time_limit(timeout_sec):
+                exec(code, env, env)
+            ok, error = True, None
+
+        except TimeoutError as e:
+            ok, error = False, f"Timeout: {e}"
+        except Exception:
+            ok, error = False, traceback.format_exc()
+
+        duration_ms = int((time.time() - started) * 1000)
+
+        result = {
+            "ok": ok,
+            "stdout": buf_out.getvalue(),
+            "stderr": buf_err.getvalue(),
+            "error": error,
+            "duration_ms": duration_ms,
+            "csv_path": str(csv_dir)
+        }
+
+        logger.info(f"py_eval completed: ok={ok}, duration={duration_ms}ms")
+
+        log_request(
+            requests_dir=requests_dir,
+            requester=requester,
+            tool_name="py_eval",
+            input_params={
+                "code": code[:500] + "..." if len(code) > 500 else code,
+                "timeout_sec": timeout_sec
+            },
+            output_result=result
+        )
+
+        return result
+
+
+def register_tool_notes(local_mcp_instance, csv_dir, requests_dir):
+    """Register tools for saving and reading tool usage notes"""
+
+    notes_dir = csv_dir / "tool_notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+
+    @local_mcp_instance.tool()
+    def save_tool_notes(requester: str, tool_name: str, markdown_notes: str) -> str:
+        """
+        Save usage notes and lessons learned about any MCP tool.
+
+        This tool helps build a knowledge base of tool usage patterns, common mistakes,
+        parameter gotchas, and successful usage examples. Notes are appended with timestamps
+        to create a historical record of lessons learned.
+
+        Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
+            tool_name (str): Name of the tool to document (e.g., 'perplexity_search', 'py_eval')
+            markdown_notes (str): Concise markdown-formatted notes about tool usage. Include:
+                - Parameter issues or gotchas discovered
+                - Successful usage patterns
+                - Edge cases or special considerations
+                - Error messages and their solutions
+                - Best practices learned from experience
+
+        Returns:
+            str: Confirmation message with the file path where notes were saved
+
+        Use Cases:
+            - After fixing a tool call with wrong parameters, save what went wrong and the fix
+            - Document complex parameter combinations that work well
+            - Record edge cases discovered during usage
+            - Build a reference for future tool calls
+            - Create a troubleshooting guide for common issues
+
+        Example usage:
+            save_tool_notes(
+                requester="my-agent",
+                tool_name="perplexity_search",
+                markdown_notes="**Parameter Issue:** The `query` parameter should be specific and focused for best results."
+            )
+
+        Note:
+            - Notes are appended to existing notes (not overwritten)
+            - Each entry is automatically timestamped
+            - Use markdown formatting for better readability
+            - Keep notes concise and actionable
+        """
+        logger.info(f"save_tool_notes invoked by {requester} for tool: {tool_name}")
+
+        try:
+            notes_dir.mkdir(parents=True, exist_ok=True)
+
+            safe_tool_name = tool_name.replace("/", "_").replace("\\", "_")
+            notes_file = notes_dir / f"{safe_tool_name}.md"
+
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            entry = f"\n\n---\n**Added:** {timestamp}\n\n{markdown_notes}\n"
+
+            mode = 'a' if notes_file.exists() else 'w'
+            with open(notes_file, mode, encoding='utf-8') as f:
+                if mode == 'w':
+                    f.write(f"# Tool Usage Notes: {tool_name}\n")
+                f.write(entry)
+
+            logger.info(f"Notes saved to {notes_file}")
+
+            result = f"Notes saved successfully\n\nTool: {tool_name}\nFile: tool_notes/{safe_tool_name}.md\nTimestamp: {timestamp}"
+
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="save_tool_notes",
+                input_params={"tool_name": tool_name, "markdown_notes": markdown_notes[:500] + "..." if len(markdown_notes) > 500 else markdown_notes},
+                output_result=result
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error saving tool notes: {e}")
+            return f"Error saving notes: {str(e)}"
+
+    @local_mcp_instance.tool()
+    def read_tool_notes(requester: str, tool_name: str) -> str:
+        """
+        Read all historical usage notes for a specific MCP tool.
+
+        This tool retrieves the complete history of lessons learned, usage patterns,
+        and troubleshooting notes that have been saved for a tool. Check notes before
+        calling complex tools to avoid known issues.
+
+        Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
+                Used for request logging and audit purposes.
+            tool_name (str): Name of the tool to read notes for (e.g., 'perplexity_search')
+
+        Returns:
+            str: Full markdown content of all historical notes, or a message if no notes exist
+
+        Use Cases:
+            - Before calling a complex tool, check for known issues or best practices
+            - Review historical parameter problems to avoid repeating mistakes
+            - Learn from past successful usage patterns
+            - Understand edge cases and special considerations
+            - Troubleshoot errors by checking if similar issues were solved before
+
+        Example usage:
+            read_tool_notes(requester="my-agent", tool_name="perplexity_search")
+
+        Note:
+            - Returns chronological history of all notes saved for the tool
+            - Returns "No notes found" if no notes have been saved yet
+            - Notes include timestamps showing when each lesson was learned
+        """
+        logger.info(f"read_tool_notes invoked by {requester} for tool: {tool_name}")
+
+        try:
+            safe_tool_name = tool_name.replace("/", "_").replace("\\", "_")
+            notes_file = notes_dir / f"{safe_tool_name}.md"
+
+            if not notes_file.exists():
+                result = f"No notes found for tool: {tool_name}\n\nUse save_tool_notes() to create the first note for this tool."
+                log_request(
+                    requests_dir=requests_dir,
+                    requester=requester,
+                    tool_name="read_tool_notes",
+                    input_params={"tool_name": tool_name},
+                    output_result=result
+                )
+                return result
+
+            with open(notes_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            logger.info(f"Read {len(content)} characters of notes for {tool_name}")
+
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="read_tool_notes",
+                input_params={"tool_name": tool_name},
+                output_result=content
+            )
+
+            return content
+
+        except Exception as e:
+            logger.error(f"Error reading tool notes: {e}")
+            return f"Error reading notes: {str(e)}"
+
+
+def register_request_log(local_mcp_instance, csv_dir, requests_dir):
+    """Register the get_request_log tool for viewing who called tools"""
+
+    @local_mcp_instance.tool()
+    def get_request_log(requester: str, since_datetime: str) -> str:
+        """
+        Get a log of tool requests filtered by datetime.
+
+        This tool reads the request logs and returns a CSV file showing who called
+        which tools and when. Useful for monitoring and auditing tool usage.
+
+        Parameters:
+            requester (str): Identifier of who is calling this tool (e.g., 'admin', 'monitor-agent').
+                Used for request logging and audit purposes.
+            since_datetime (str): Only include records from this datetime onwards.
+                Format: ISO 8601 format (e.g., '2024-12-22T00:00:00' or '2024-12-22')
+
+        Returns:
+            str: Formatted response with CSV file info, schema, sample data, and Python snippet.
+
+        CSV Output Columns:
+            - datetime (string): When the tool was called (ISO format, sorted ascending)
+            - requester (string): Who called the tool
+            - tool_name (string): Name of the tool that was called
+
+        Example usage:
+            get_request_log(requester="admin", since_datetime="2024-12-22T00:00:00")
+            get_request_log(requester="admin", since_datetime="2024-12-22")
+        """
+        logger.info(f"get_request_log invoked by {requester} with since_datetime: {since_datetime}")
+
+        try:
+            try:
+                if 'T' in since_datetime:
+                    filter_dt = datetime.fromisoformat(since_datetime.replace('Z', '+00:00'))
+                else:
+                    filter_dt = datetime.fromisoformat(since_datetime)
+            except ValueError as e:
+                error_msg = f"Invalid datetime format: {since_datetime}. Use ISO format like '2024-12-22T00:00:00' or '2024-12-22'"
+                logger.error(error_msg)
+                return f"Error: {error_msg}"
+
+            records = []
+            if requests_dir.exists():
+                for json_file in requests_dir.glob("*.json"):
+                    try:
+                        with open(json_file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+
+                        record_dt_str = data.get("timestamp_iso", "")
+                        if record_dt_str:
+                            record_dt = datetime.fromisoformat(record_dt_str.replace('Z', '+00:00'))
+
+                            if record_dt.tzinfo is not None and filter_dt.tzinfo is None:
+                                filter_dt = filter_dt.replace(tzinfo=timezone.utc)
+
+                            if record_dt >= filter_dt:
+                                records.append({
+                                    "datetime": record_dt_str,
+                                    "requester": data.get("requester", "unknown"),
+                                    "tool_name": data.get("tool_name", "unknown")
+                                })
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(f"Skipping invalid JSON file {json_file}: {e}")
+                        continue
+
+            if records:
+                df = pd.DataFrame(records)
+                df = df.sort_values("datetime", ascending=True).reset_index(drop=True)
+            else:
+                df = pd.DataFrame(columns=["datetime", "requester", "tool_name"])
+
+            filename = f"request_log_{str(uuid.uuid4())[:8]}.csv"
+            filepath = csv_dir / filename
+
+            df.to_csv(filepath, index=False)
+            logger.info(f"Saved request log to {filename} with {len(df)} records")
+
+            result = format_csv_response(filepath, df)
+
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="get_request_log",
+                input_params={"since_datetime": since_datetime},
+                output_result=result
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error getting request log: {e}")
+            error_result = f"Error getting request log: {str(e)}"
+
+            log_request(
+                requests_dir=requests_dir,
+                requester=requester,
+                tool_name="get_request_log",
+                input_params={"since_datetime": since_datetime},
+                output_result=error_result
+            )
+
+            return error_result

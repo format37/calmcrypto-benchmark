@@ -1,8 +1,14 @@
 # Environment variables
 .env
+.env.prod
+mcp/.env.prod
 
 # Output directories
 output/
+data/
+
+# MCP server data
+mcp/data/
 
 # Python
 __pycache__/
@@ -18,3 +24,5 @@ build/
 *.swp
 
 CLAUDE.md
+
+examples/
