@@ -2,7 +2,8 @@
 
 A cryptocurrency signal evaluation tool that fetches trading data from Grafana/VictoriaMetrics, calculates predictive metrics, and generates interactive benchmark reports.
 
-**[📊 Report Demo (SOL)](https://format37.github.io/calmcrypto-benchmark/assets/sol_signal_benchmark_report.html)**
+**[📈 Multi-Asset Report Demo](https://format37.github.io/calmcrypto-benchmark/assets/multi_asset_benchmark_report.html)**  
+**[📊 Single Asset Report Demo (OXT)](https://format37.github.io/calmcrypto-benchmark/assets/oxt_signal_benchmark_report.html)**
 
 ## Installation
 
@@ -51,6 +52,21 @@ python list_assets.py
 ```
 
 Fetches all available assets from the Grafana API and saves them to `output/available_assets.csv`.
+
+### Benchmark All Assets
+
+```bash
+# Benchmark all assets (may take time with 400+ assets)
+python benchmark_all_assets.py
+
+# Limit to first N assets
+python benchmark_all_assets.py --top-n-assets 50
+
+# Custom timeframe
+python benchmark_all_assets.py --days 14
+```
+
+Ranks all assets by signal predictability and generates `output/asset_benchmark_summary.csv` and `output/multi_asset_benchmark_report.html`.
 
 ### Generate Interactive Report
 
@@ -220,6 +236,7 @@ calmcrypto/
 ├── .env.example           # Environment template
 ├── dashboard.py           # Grafana API client
 ├── list_assets.py         # List available assets
+├── benchmark_all_assets.py # Multi-asset benchmark
 ├── fetch.py               # Minimal API wrapper
 ├── calmcrypto_plot.py     # Original visualization script
 ├── signal_eval/           # Signal evaluation package
