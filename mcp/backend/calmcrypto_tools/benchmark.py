@@ -1,11 +1,14 @@
 """benchmark_all_assets MCP tool."""
 
+import contextlib
 import logging
 import uuid
 import warnings
 import sys
 import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 
 import pandas as pd
 
@@ -40,16 +43,11 @@ def _benchmark_single_asset(asset: str, config, demo: bool = False) -> dict:
         registry = SignalRegistry.from_raw_data(raw_data)
         price = registry.get_price_series(raw_data)
 
-        # Evaluate (suppress output)
-        old_stdout = sys.stdout
-        sys.stdout = io.StringIO()
-
-        try:
+        # Evaluate (suppress output - thread-safe)
+        with contextlib.redirect_stdout(io.StringIO()):
             evaluator = SignalEvaluator(price, config)
             evaluator.add_signals(registry.all_signals())
             rankings = evaluator.evaluate_all()
-        finally:
-            sys.stdout = old_stdout
 
         if rankings.empty:
             return None
@@ -79,7 +77,8 @@ def register_benchmark_all_assets(local_mcp_instance, csv_dir, requests_dir):
         requester: str,
         days: int = 7,
         top_n_assets: int = 0,
-        demo: bool = False
+        demo: bool = False,
+        max_workers: int = 5
     ) -> str:
         """
         Evaluate all assets by signal predictability and rank them.
@@ -94,6 +93,7 @@ def register_benchmark_all_assets(local_mcp_instance, csv_dir, requests_dir):
             days (int): Days of historical data to analyze (default: 7).
             top_n_assets (int): Limit to first N assets alphabetically (0 = all, default: 0).
             demo (bool): Use demo data instead of live API (default: False).
+            max_workers (int): Maximum parallel threads for benchmarking (default: 10).
 
         Returns:
             str: Formatted CSV response with asset rankings by predictability.
@@ -139,20 +139,34 @@ def register_benchmark_all_assets(local_mcp_instance, csv_dir, requests_dir):
             if top_n_assets > 0:
                 assets = assets[:top_n_assets]
 
-            logger.info(f"Benchmarking {len(assets)} assets...")
+            logger.info(f"Benchmarking {len(assets)} assets with {max_workers} workers...")
 
             results = []
             failed = []
+            completed_count = 0
+            count_lock = Lock()
 
-            for i, asset in enumerate(assets, 1):
+            def process_asset(asset):
+                nonlocal completed_count
                 result = _benchmark_single_asset(asset, config, demo=demo)
-
+                with count_lock:
+                    completed_count += 1
+                    idx = completed_count
                 if result:
-                    results.append(result)
-                    logger.info(f"[{i}/{len(assets)}] {asset}: score={result['best_composite_score']:.3f}")
+                    logger.info(f"[{idx}/{len(assets)}] {asset}: score={result['best_composite_score']:.3f}")
                 else:
-                    failed.append(asset)
-                    logger.info(f"[{i}/{len(assets)}] {asset}: FAILED")
+                    logger.info(f"[{idx}/{len(assets)}] {asset}: FAILED")
+                return (asset, result)
+
+            num_workers = min(max_workers, len(assets))
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                futures = {executor.submit(process_asset, asset): asset for asset in assets}
+                for future in as_completed(futures):
+                    asset, result = future.result()
+                    if result:
+                        results.append(result)
+                    else:
+                        failed.append(asset)
 
             if not results:
                 error_msg = "No results. All assets failed benchmark."
@@ -160,7 +174,7 @@ def register_benchmark_all_assets(local_mcp_instance, csv_dir, requests_dir):
                     requests_dir=requests_dir,
                     requester=requester,
                     tool_name="benchmark_all_assets",
-                    input_params={"days": days, "top_n_assets": top_n_assets, "demo": demo},
+                    input_params={"days": days, "top_n_assets": top_n_assets, "demo": demo, "max_workers": max_workers},
                     output_result=error_msg
                 )
                 return error_msg
