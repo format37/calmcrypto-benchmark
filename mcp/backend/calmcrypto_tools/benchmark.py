@@ -2,6 +2,7 @@
 
 import contextlib
 import logging
+import os
 import uuid
 import warnings
 import sys
@@ -78,7 +79,7 @@ def register_benchmark_all_assets(local_mcp_instance, csv_dir, requests_dir):
         days: int = 7,
         top_n_assets: int = 0,
         demo: bool = False,
-        max_workers: int = 5
+        start_from_asset: str = ""
     ) -> str:
         """
         Evaluate all assets by signal predictability and rank them.
@@ -93,7 +94,7 @@ def register_benchmark_all_assets(local_mcp_instance, csv_dir, requests_dir):
             days (int): Days of historical data to analyze (default: 7).
             top_n_assets (int): Limit to first N assets alphabetically (0 = all, default: 0).
             demo (bool): Use demo data instead of live API (default: False).
-            max_workers (int): Maximum parallel threads for benchmarking (default: 10).
+            start_from_asset (str): Start benchmarking from this asset alphabetically, for pagination (default: "").
 
         Returns:
             str: Formatted CSV response with asset rankings by predictability.
@@ -133,11 +134,26 @@ def register_benchmark_all_assets(local_mcp_instance, csv_dir, requests_dir):
             config.data_hours = days * 24
 
             api = CalmCryptoAPI()
-            assets = api.get_all_assets()
-            assets.sort()
+            all_assets = api.get_all_assets()
+            all_assets.sort()
+            assets = all_assets.copy()
+
+            # Pagination: start from specified asset
+            if start_from_asset:
+                try:
+                    start_idx = assets.index(start_from_asset.upper())
+                    assets = assets[start_idx:]
+                except ValueError:
+                    pass  # Asset not found, use full list
 
             if top_n_assets > 0:
                 assets = assets[:top_n_assets]
+
+            # Track last asset for pagination
+            last_asset_in_batch = assets[-1] if assets else ""
+
+            # Get max_workers from environment
+            max_workers = int(os.getenv("BENCHMARK_MAX_WORKERS", "5"))
 
             logger.info(f"Benchmarking {len(assets)} assets with {max_workers} workers...")
 
@@ -174,7 +190,7 @@ def register_benchmark_all_assets(local_mcp_instance, csv_dir, requests_dir):
                     requests_dir=requests_dir,
                     requester=requester,
                     tool_name="benchmark_all_assets",
-                    input_params={"days": days, "top_n_assets": top_n_assets, "demo": demo, "max_workers": max_workers},
+                    input_params={"days": days, "top_n_assets": top_n_assets, "demo": demo, "start_from_asset": start_from_asset},
                     output_result=error_msg
                 )
                 return error_msg
@@ -194,12 +210,26 @@ def register_benchmark_all_assets(local_mcp_instance, csv_dir, requests_dir):
             result += f"- Assets analyzed: {len(results)}\n"
             result += f"- Assets failed: {len(failed)}\n"
             result += f"- Top asset: {df.iloc[0]['asset']} (score: {df.iloc[0]['best_composite_score']:.3f})\n"
+            result += f"- Last asset: {last_asset_in_batch}\n"
+
+            # Pagination info
+            if last_asset_in_batch:
+                try:
+                    last_idx = all_assets.index(last_asset_in_batch)
+                    remaining = len(all_assets) - last_idx - 1
+                    if remaining > 0:
+                        result += f"- Remaining assets: {remaining}\n"
+                        result += f"- Next batch: start_from_asset='{all_assets[last_idx + 1]}'\n"
+                    else:
+                        result += f"- Status: All assets processed\n"
+                except ValueError:
+                    pass
 
             log_request(
                 requests_dir=requests_dir,
                 requester=requester,
                 tool_name="benchmark_all_assets",
-                input_params={"days": days, "top_n_assets": top_n_assets, "demo": demo},
+                input_params={"days": days, "top_n_assets": top_n_assets, "demo": demo, "start_from_asset": start_from_asset},
                 output_result=result
             )
 
@@ -213,7 +243,7 @@ def register_benchmark_all_assets(local_mcp_instance, csv_dir, requests_dir):
                 requests_dir=requests_dir,
                 requester=requester,
                 tool_name="benchmark_all_assets",
-                input_params={"days": days, "top_n_assets": top_n_assets, "demo": demo},
+                input_params={"days": days, "top_n_assets": top_n_assets, "demo": demo, "start_from_asset": start_from_asset},
                 output_result=error_msg
             )
 

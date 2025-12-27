@@ -20,6 +20,7 @@ services:
       - TZ=UTC
       - MCP_NAME=calmcrypto
       - PYTHONPATH=/app/calmcrypto:/app
+      - BENCHMARK_MAX_WORKERS=5
     expose:
       - "8007"
     networks:
