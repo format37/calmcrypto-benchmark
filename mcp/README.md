@@ -24,7 +24,7 @@ cd backend
 export PYTHONPATH=/path/to/calmcrypto-benchmark
 
 # Copy and edit environment file
-cp ../.env.local.example .env
+cp ../.env.local.example .env.prod
 # Edit .env with your credentials
 
 # Install dependencies

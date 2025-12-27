@@ -17,6 +17,10 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+signal_eval/metrics/__pycache__/
+signal_eval/__pycache__/
+mcp/backend/calmcrypto_tools/__pycache__/
+mcp/backend/__pycache__/
 
 # IDE
 .idea/
@@ -26,3 +30,4 @@ build/
 CLAUDE.md
 
 examples/
+tech_prompt.md
