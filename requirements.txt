@@ -6,3 +6,4 @@ plotly
 statsmodels
 scipy
 python-dotenv
+openpyxl

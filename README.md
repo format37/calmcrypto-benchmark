@@ -87,6 +87,63 @@ python predict_price.py SOL --days 21
 
 Predicts price direction (UP/DOWN) with probability for 1h, 12h, and 24h timeframes. Outputs to console and saves JSON to `output/prediction_{ASSET}.json`.
 
+### Signal Research Report
+
+Generate interactive research reports to visualize how signals correlate with price movements over extended periods (up to 90 days).
+
+```bash
+# BTC and ETH, 90 days, 5-min interval, top 5 signals
+python -m signal_research.research_report --assets BTC ETH --days 90 --step 5m --top-signals 5
+
+# 15-min interval for different analysis
+python -m signal_research.research_report --assets BTC --days 90 --step 15m --top-signals 10
+
+# Demo mode (no API needed)
+python -m signal_research.research_report --demo --assets BTC --days 7
+
+# All available assets
+python -m signal_research.research_report --all-assets --days 90
+```
+
+**Output Structure:**
+```
+output/research/{timestamp}/
+    BTC/
+        BTC_research_report.html    # Interactive Plotly chart
+        price.csv                   # Raw price data
+        rsi.csv                     # RSI values
+        total_borrow.csv            # Borrow volume
+        total_repay.csv             # Repay volume
+        funding_rate.csv            # Funding rate
+        open_interest.csv           # Open interest
+        signal_events.csv           # UP/DOWN signal events
+    ETH/
+        ...
+    signal_research_report.xlsx     # Consolidated Excel workbook
+    metadata.csv                    # Run parameters
+```
+
+**Chart Features:**
+- Price line with signal markers (green triangles UP, red triangles DOWN)
+- 5 raw data panels below: RSI, Borrow/Repay, Funding Rate, Open Interest, Net Flow
+- "Show All" / "Hide All" buttons for quick legend control
+- Click legend to toggle individual traces
+- Double-click legend to isolate a single trace
+- Hover for detailed signal information (confidence, reason)
+
+**CLI Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--assets SYMBOLS` | Assets to analyze (default: BTC ETH) |
+| `--all-assets` | Process all available assets |
+| `--days N` | Days of historical data (default: 90) |
+| `--step {5m,15m}` | Data interval (default: 5m) |
+| `--top-signals N` | Number of top signals to display (default: 5) |
+| `--min-confidence N` | Minimum confidence for events (default: 0.4) |
+| `--output-dir DIR` | Output directory (default: output/research) |
+| `--demo` | Use demo data (no API needed) |
+
 ### Generate Interactive Report
 
 ```bash
@@ -344,6 +401,7 @@ calmcrypto/
 ├── dashboard.py           # Grafana API client
 ├── list_assets.py         # List available assets
 ├── benchmark_all_assets.py # Multi-asset benchmark
+├── bulk_data_fetcher.py   # Efficient bulk data fetching
 ├── predict_price.py       # Price direction prediction
 ├── fetch.py               # Minimal API wrapper
 ├── calmcrypto_plot.py     # Original visualization script
@@ -363,5 +421,10 @@ calmcrypto/
 │       ├── hit_rate.py
 │       ├── granger.py
 │       └── rolling_power.py
+├── signal_research/       # Interactive research reports
+│   ├── research_report.py # CLI entry point
+│   ├── signal_events.py   # Generate UP/DOWN events
+│   ├── chart_builder.py   # Multi-subplot Plotly charts
+│   └── exporters.py       # CSV and XLS export
 └── output/                # Generated results
 ```
