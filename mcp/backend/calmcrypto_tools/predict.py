@@ -82,24 +82,31 @@ def register_predict_price(local_mcp_instance, csv_dir, requests_dir):
             days (int): Days of historical data for signal evaluation (default: 14).
 
         Returns:
-            str: Formatted prediction summary with JSON file path.
+            str: Formatted prediction summary with file paths.
 
-        Output includes:
-            - current_price: Current asset price
-            - predictions: Dict with 1h/12h/24h predictions
-                - direction: 'UP', 'DOWN', or 'NEUTRAL'
-                - probability: 0.0-1.0
-                - confidence: 'Very Low' to 'Very High'
-                - confidence_score: 0.0-1.0 (numeric)
-                - signals_used: Number of signals contributing to this timeframe
-                - agreement_ratio: How much signals agree (0.5-1.0)
-            - signals_analyzed: List of signals with interpretation details
-                - name, rule_type, interpretation, prediction, is_contrarian
-                - best_lag, current_ic, effective_hit_rate
+        Generated Files:
+            - {prefix}_predictions.csv: Timeframe predictions (direction, probability, confidence, agreement)
+            - {prefix}_signals.csv: Signal analysis (rule_type, interpretation, prediction, metrics)
+            - {prefix}.json: Full prediction data
+
+        CSV Schemas:
+            predictions.csv columns:
+                timeframe, direction, probability, confidence, confidence_score, signals_used, agreement_ratio
+            signals.csv columns:
+                signal, rule_type, interpretation, prediction, is_contrarian, current_ic, effective_hit_rate, best_lag
 
         Example usage:
             predict_price(requester="my-agent", asset="BTC")
             predict_price(requester="my-agent", asset="ETH", top_n=10, days=7)
+
+        py_eval example:
+            import pandas as pd
+            preds = pd.read_csv('data/mcp-calmcrypto/prediction_BTC_abc12345_predictions.csv')
+            sigs = pd.read_csv('data/mcp-calmcrypto/prediction_BTC_abc12345_signals.csv')
+            print("=== Predictions ===")
+            print(preds.to_string(index=False))
+            print("\n=== Signals ===")
+            print(sigs.to_string(index=False))
 
         Use Cases:
             - Get directional price prediction for trading decisions
