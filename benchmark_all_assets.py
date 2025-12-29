@@ -15,9 +15,59 @@ from signal_eval.data_fetcher import DataFetcher
 from signal_eval.signals import SignalRegistry
 from signal_eval.evaluator import SignalEvaluator
 from signal_eval.config import Config
+from bulk_data_fetcher import BulkDataFetcher
 
 # Suppress warnings during batch processing
 warnings.filterwarnings('ignore')
+
+
+def benchmark_asset_from_data(asset: str, raw_data: dict, config: Config) -> dict:
+    """
+    Run benchmark for a single asset using pre-fetched data.
+
+    Args:
+        asset: Asset symbol
+        raw_data: Pre-fetched data dict from BulkDataFetcher
+        config: Evaluation config
+
+    Returns:
+        Summary metrics dict, or None if benchmark fails.
+    """
+    try:
+        # Build signals from pre-fetched data
+        registry = SignalRegistry.from_raw_data(raw_data)
+        price = registry.get_price_series(raw_data)
+
+        # Evaluate (suppress per-signal errors in batch mode)
+        import io
+        import sys
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+
+        try:
+            evaluator = SignalEvaluator(price, config)
+            evaluator.add_signals(registry.all_signals())
+            rankings = evaluator.evaluate_all()
+        finally:
+            sys.stdout = old_stdout
+
+        if rankings.empty:
+            return None
+
+        # Extract summary metrics
+        top_row = rankings.iloc[0]
+        return {
+            'asset': asset,
+            'best_composite_score': top_row['composite_score'],
+            'best_signal': top_row['signal_name'],
+            'avg_composite_score': rankings['composite_score'].mean(),
+            'significant_signals': int(rankings['granger_significant'].sum()),
+            'best_effective_hit_rate': rankings['effective_hit_rate'].max(),
+            'best_ic': rankings['best_spearman_ic'].abs().max(),
+            'signals_evaluated': len(rankings),
+        }
+    except Exception as e:
+        return None
 
 
 def benchmark_asset(asset: str, config: Config, demo: bool = False) -> dict:
@@ -334,6 +384,8 @@ def main():
                         help='Limit to first N assets')
     parser.add_argument('--output-dir', type=str, default='output',
                         help='Output directory')
+    parser.add_argument('--no-bulk', action='store_true',
+                        help='Disable bulk fetching (use per-asset API calls)')
     args = parser.parse_args()
 
     # Setup
@@ -358,16 +410,46 @@ def main():
     results = []
     failed = []
 
-    for i, asset in enumerate(assets, 1):
-        result = benchmark_asset(asset, config, demo=args.demo)
+    if args.demo or args.no_bulk:
+        # Legacy mode: fetch data per-asset (slower, but supports demo mode)
+        if args.no_bulk and not args.demo:
+            print("Using per-asset API fetching (--no-bulk mode)")
+        for i, asset in enumerate(assets, 1):
+            result = benchmark_asset(asset, config, demo=args.demo)
 
-        if result:
-            results.append(result)
-            print(f"[{i}/{len(assets)}] {asset}: score={result['best_composite_score']:.3f}, "
-                  f"best={result['best_signal']}")
-        else:
-            failed.append(asset)
-            print(f"[{i}/{len(assets)}] {asset}: FAILED")
+            if result:
+                results.append(result)
+                print(f"[{i}/{len(assets)}] {asset}: score={result['best_composite_score']:.3f}, "
+                      f"best={result['best_signal']}")
+            else:
+                failed.append(asset)
+                print(f"[{i}/{len(assets)}] {asset}: FAILED")
+    else:
+        # Bulk mode: fetch all data upfront (6 API calls instead of ~2500)
+        print("Using bulk data fetching (6 API calls for all assets)")
+        print()
+        bulk_fetcher = BulkDataFetcher()
+        all_data = bulk_fetcher.fetch_all_metrics(hours=config.data_hours, step=config.step)
+        print()
+
+        # Filter to requested assets
+        available_assets = [a for a in assets if a in all_data]
+        missing_assets = [a for a in assets if a not in all_data]
+        failed.extend(missing_assets)
+
+        print(f"Processing {len(available_assets)} assets locally...")
+        print("-" * 60)
+
+        for i, asset in enumerate(available_assets, 1):
+            result = benchmark_asset_from_data(asset, all_data[asset], config)
+
+            if result:
+                results.append(result)
+                print(f"[{i}/{len(available_assets)}] {asset}: score={result['best_composite_score']:.3f}, "
+                      f"best={result['best_signal']}")
+            else:
+                failed.append(asset)
+                print(f"[{i}/{len(available_assets)}] {asset}: FAILED")
 
     print("-" * 60)
     print(f"Complete. {len(results)} succeeded, {len(failed)} failed.")

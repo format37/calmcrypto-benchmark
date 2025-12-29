@@ -125,25 +125,38 @@ Each run creates a timestamped folder in `output/` containing:
 
 ## Signals Evaluated
 
-All signals are computed for the specified asset (default: BTC).
+All signals are computed locally from 6 raw metrics fetched via API. Default asset: BTC.
 
-| Signal | Description |
-|--------|-------------|
-| `borrow_repay_ratio` | Asset borrow / repay volume ratio |
-| `borrow_momentum` | 1-hour rate of change in borrow volume |
-| `repay_momentum` | 1-hour rate of change in repay volume |
-| `rsi_raw` | Raw RSI indicator (3m timeframe) |
-| `rsi_zscore` | RSI standardized (z-score over 1-day window) |
-| `total_borrow` | Raw borrow volume for asset |
-| `total_repay` | Raw repay volume for asset |
-| `funding_rate` | Perpetual futures funding rate |
-| `funding_zscore` | Funding rate standardized |
-| `open_interest` | Futures open interest |
-| `oi_momentum` | 1-hour rate of change in open interest |
-| `oi_zscore` | Open interest standardized |
-| `net_flow` | Borrow - Repay (net margin flow) |
-| `net_flow_momentum` | 1-hour rate of change in net flow |
-| `ratio_momentum` | 1-hour rate of change in borrow/repay ratio |
+### Raw Data Sources (6 API metrics)
+
+| Source | PromQL Metric | Label | Description |
+|--------|---------------|-------|-------------|
+| price | `binance_price_usdt` | asset | Spot price in USDT |
+| total_borrow | `binance_24h_total_borrow_usdt` | asset | 24h margin borrow volume |
+| total_repay | `binance_24h_total_repay_usdt` | asset | 24h margin repay volume |
+| rsi | `rsi{timeframe="3m", source="indicator_core"}` | symbol | RSI indicator (3min) |
+| open_interest | `binance_futures_open_interest` | symbol | Futures open interest |
+| funding_rate | `binance_futures_funding_rate` | symbol | Futures funding rate |
+
+### Computed Signals (15 total)
+
+| # | Signal | Description | Computation |
+|---|--------|-------------|-------------|
+| 1 | `borrow_repay_ratio` | Asset borrow / repay volume ratio | borrow / repay |
+| 2 | `borrow_momentum` | 1-hour rate of change in borrow volume | borrow.pct_change(12) |
+| 3 | `repay_momentum` | 1-hour rate of change in repay volume | repay.pct_change(12) |
+| 4 | `rsi_raw` | Raw RSI indicator (3m timeframe) | direct |
+| 5 | `rsi_zscore` | RSI standardized (z-score over 1-day window) | (rsi - rolling_mean) / rolling_std |
+| 6 | `total_borrow` | Raw borrow volume for asset | direct |
+| 7 | `total_repay` | Raw repay volume for asset | direct |
+| 8 | `funding_rate` | Perpetual futures funding rate | direct |
+| 9 | `open_interest` | Futures open interest | direct |
+| 10 | `oi_momentum` | 1-hour rate of change in open interest | oi.pct_change(12) |
+| 11 | `net_flow` | Borrow - Repay (net margin flow) | borrow - repay |
+| 12 | `net_flow_momentum` | 1-hour rate of change in net flow | net_flow.pct_change(12) |
+| 13 | `ratio_momentum` | 1-hour rate of change in borrow/repay ratio | ratio.pct_change(12) |
+| 14 | `funding_zscore` | Funding rate standardized | (funding - mean) / std |
+| 15 | `oi_zscore` | Open interest standardized | (oi - mean) / std |
 
 ## Evaluation Metrics
 
