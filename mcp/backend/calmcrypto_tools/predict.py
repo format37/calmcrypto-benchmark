@@ -27,8 +27,8 @@ def register_predict_price(local_mcp_instance, csv_dir, requests_dir):
         """
         Predict price direction with probability for an asset.
 
-        Uses top-ranked signals to generate UP/DOWN predictions for
-        multiple timeframes (1h, 12h, 24h) with confidence levels.
+        Uses config-driven signal interpretation rules and timeframe-weighted
+        aggregation to generate UP/DOWN predictions for 1h, 12h, 24h timeframes.
 
         Parameters:
             requester (str): Identifier of who is calling this tool (e.g., 'trading-agent', 'user-alex').
@@ -43,10 +43,15 @@ def register_predict_price(local_mcp_instance, csv_dir, requests_dir):
         Output includes:
             - current_price: Current asset price
             - predictions: Dict with 1h/12h/24h predictions
-                - direction: 'UP' or 'DOWN'
+                - direction: 'UP', 'DOWN', or 'NEUTRAL'
                 - probability: 0.0-1.0
                 - confidence: 'Very Low' to 'Very High'
-            - signals_used: List of contributing signals with details
+                - confidence_score: 0.0-1.0 (numeric)
+                - signals_used: Number of signals contributing to this timeframe
+                - agreement_ratio: How much signals agree (0.5-1.0)
+            - signals_analyzed: List of signals with interpretation details
+                - name, rule_type, interpretation, prediction, is_contrarian
+                - best_lag, current_ic, effective_hit_rate
 
         Example usage:
             predict_price(requester="my-agent", asset="BTC")
