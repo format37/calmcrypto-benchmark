@@ -6,6 +6,87 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Dict
 
 
+def _default_signal_rules() -> Dict[str, dict]:
+    """Default interpretation rules for each signal type."""
+    return {
+        # Threshold-based contrarian (RSI-style)
+        'rsi_raw': {
+            'type': 'threshold_contrarian',
+            'bullish_below': 30,
+            'bearish_above': 70,
+            'neutral_range': [35, 65]
+        },
+        # Z-score contrarian (extreme values predict reversal)
+        'rsi_zscore': {
+            'type': 'zscore_contrarian',
+            'threshold': 2.0
+        },
+        'funding_zscore': {
+            'type': 'zscore_contrarian',
+            'threshold': 2.0
+        },
+        'oi_zscore': {
+            'type': 'zscore_contrarian',
+            'threshold': 2.0
+        },
+        # Momentum directional (trend-following)
+        'borrow_momentum': {
+            'type': 'momentum_directional',
+            'lookback': 12
+        },
+        'repay_momentum': {
+            'type': 'momentum_directional',
+            'lookback': 12,
+            'invert': True  # Less repay = bullish
+        },
+        'net_flow_momentum': {
+            'type': 'momentum_directional',
+            'lookback': 12
+        },
+        'ratio_momentum': {
+            'type': 'momentum_directional',
+            'lookback': 12
+        },
+        'oi_momentum': {
+            'type': 'momentum_directional',
+            'lookback': 12
+        },
+        # Level-based
+        'borrow_repay_ratio': {
+            'type': 'level',
+            'bullish_above': 1.0,
+            'bearish_below': 0.9
+        },
+        'net_flow': {
+            'type': 'level',
+            'bullish_above': 0,
+            'bearish_below': 0
+        },
+        # Level with extremes (normal directional, contrarian at extremes)
+        'funding_rate': {
+            'type': 'level_with_extremes',
+            'bullish_above': 0,
+            'bearish_below': 0,
+            'extreme_threshold': 0.0005,  # 0.05% funding = extreme
+            'extreme_contrarian': True
+        },
+        # Raw values - use momentum detection
+        'total_borrow': {
+            'type': 'momentum_directional',
+            'lookback': 12
+        },
+        'total_repay': {
+            'type': 'momentum_directional',
+            'lookback': 12,
+            'invert': True
+        },
+        'open_interest': {
+            'type': 'momentum_directional',
+            'lookback': 12
+        }
+    }
+
+
 @dataclass
 class Config:
     """Configuration for signal evaluation system."""
@@ -44,6 +125,9 @@ class Config:
 
     # Output settings
     output_dir: str = "output"
+
+    # Per-signal interpretation rules for prediction
+    signal_rules: Dict[str, dict] = field(default_factory=_default_signal_rules)
 
     @classmethod
     def load(cls, path: str = "config.json") -> 'Config':

@@ -12,6 +12,12 @@ from signal_eval.data_fetcher import DataFetcher
 from signal_eval.signals import SignalRegistry
 from signal_eval.evaluator import SignalEvaluator
 from signal_eval.config import Config
+from signal_eval.interpreters import (
+    interpret_signal,
+    compute_timeframe_weight,
+    aggregate_predictions,
+    compute_dispersion_confidence,
+)
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -74,87 +80,122 @@ def predict_asset(asset: str, top_n: int = 5, days: int = 7) -> dict:
     finally:
         sys.stdout = old_stdout
 
-    # Get top N signals
-    top_signals = rankings.head(top_n)
+    # Get top N signals (optionally filter by Granger significance)
+    valid_signals = rankings[rankings['granger_significant'] == True]
+    if len(valid_signals) >= top_n:
+        top_signals = valid_signals.head(top_n)
+    else:
+        # Fall back to all signals if not enough Granger-significant ones
+        top_signals = rankings.head(top_n)
 
-    # Get current signal directions and build predictions
-    signals_used = []
+    # Build predictions for each timeframe
     predictions = {}
+    all_signal_details = []
 
-    for timeframe, periods in TIMEFRAMES.items():
-        up_confidence = 0.0
-        down_confidence = 0.0
+    for timeframe, target_periods in TIMEFRAMES.items():
+        timeframe_predictions = []
 
         for _, row in top_signals.iterrows():
             signal_name = row['signal_name']
             signal = registry.get(signal_name)
 
-            if signal is None or len(signal) < 2:
+            if signal is None or len(signal.dropna()) < 6:
                 continue
 
-            # Current signal direction (last value vs previous)
-            current_val = signal.iloc[-1]
-            prev_val = signal.iloc[-2]
+            # Get signal interpretation rule from config
+            rule = config.signal_rules.get(signal_name, {'type': 'momentum_directional'})
 
-            if np.isnan(current_val) or np.isnan(prev_val):
+            # Interpret signal using rule-based logic
+            interp = interpret_signal(signal, rule)
+
+            if interp['prediction'] == 0:
+                # Skip neutral signals (no clear prediction)
                 continue
 
-            signal_rising = current_val > prev_val
-            signal_direction = "rising" if signal_rising else "falling"
-
-            # Check if contrarian
+            # Get evaluation metrics
+            best_lag = row.get('best_lag', 12)
+            current_ic = row.get('current_ic', 0.1)
             is_contrarian = row.get('is_contrarian', False)
-            hit_rate = row.get('effective_hit_rate', 0.5)
-            composite = row.get('composite_score', 0)
+            effective_hit_rate = row.get('effective_hit_rate', 0.5)
 
-            # Determine predicted direction
+            # Handle NaN in current_ic
+            if np.isnan(current_ic):
+                current_ic = 0.1
+
+            # Compute timeframe weight (Gaussian based on best_lag proximity)
+            timeframe_weight = compute_timeframe_weight(best_lag, target_periods)
+
+            # Skip if signal's optimal lag is too far from this timeframe
+            if timeframe_weight < 0.01:
+                continue
+
+            # Apply contrarian adjustment from evaluation (in addition to rule-based)
+            # This handles cases where historical analysis found opposite relationship
+            final_prediction = interp['prediction']
             if is_contrarian:
-                predicts_up = not signal_rising
-            else:
-                predicts_up = signal_rising
+                final_prediction *= -1
 
-            predicted_dir = "UP" if predicts_up else "DOWN"
+            # Compute signal weight: current_ic (recent strength) × timeframe relevance
+            weight = abs(current_ic) * timeframe_weight
 
-            # Weight by composite score and hit rate
-            weight = composite * hit_rate
+            timeframe_predictions.append({
+                'signal': signal_name,
+                'direction': final_prediction,
+                'weight': weight,
+                'confidence': interp['confidence'],
+                'reason': interp['reason'],
+                'timeframe_weight': timeframe_weight,
+                'is_contrarian': is_contrarian,
+            })
 
-            if predicts_up:
-                up_confidence += weight
-            else:
-                down_confidence += weight
-
-            # Record signal info (only once, for first timeframe)
+            # Record signal details (only for first timeframe to avoid duplicates)
             if timeframe == '1h':
-                signals_used.append({
+                all_signal_details.append({
                     'name': signal_name,
-                    'direction': signal_direction,
-                    'prediction': predicted_dir,
-                    'hit_rate': round(hit_rate, 3),
+                    'interpretation': interp['reason'],
+                    'prediction': 'UP' if final_prediction > 0 else 'DOWN',
+                    'rule_type': rule.get('type', 'unknown'),
+                    'best_lag': best_lag,
+                    'current_ic': round(current_ic, 4),
+                    'effective_hit_rate': round(effective_hit_rate, 3),
                     'is_contrarian': bool(is_contrarian),
                 })
 
-        # Calculate probability
-        total = up_confidence + down_confidence
-        if total > 0:
-            prob_up = up_confidence / total
+        # Aggregate predictions for this timeframe
+        if timeframe_predictions:
+            agg = aggregate_predictions(timeframe_predictions)
+            disp = compute_dispersion_confidence(timeframe_predictions)
+
+            # Determine final probability (for the predicted direction)
+            prob_up = agg['prob_up']
+            direction = agg['direction']
+            probability = prob_up if direction == 'UP' else (1 - prob_up)
+
+            predictions[timeframe] = {
+                'direction': direction,
+                'probability': round(probability, 3),
+                'confidence': disp['label'],
+                'confidence_score': round(disp['confidence'], 3),
+                'signals_used': disp['n_signals'],
+                'agreement_ratio': round(disp['agreement_ratio'], 3),
+            }
         else:
-            prob_up = 0.5
-
-        direction = "UP" if prob_up > 0.5 else "DOWN"
-        probability = prob_up if direction == "UP" else (1 - prob_up)
-
-        predictions[timeframe] = {
-            'direction': direction,
-            'probability': round(probability, 3),
-            'confidence': get_confidence_label(probability),
-        }
+            # No valid predictions for this timeframe
+            predictions[timeframe] = {
+                'direction': 'NEUTRAL',
+                'probability': 0.5,
+                'confidence': 'Very Low',
+                'confidence_score': 0.0,
+                'signals_used': 0,
+                'agreement_ratio': 0.5,
+            }
 
     return {
         'asset': config.asset,
         'timestamp': datetime.now().isoformat(),
         'current_price': current_price,
         'predictions': predictions,
-        'signals_used': signals_used,
+        'signals_analyzed': all_signal_details,
     }
 
 
@@ -163,32 +204,49 @@ def print_prediction(result: dict) -> None:
     asset = result['asset']
     price = result['current_price']
 
-    print(f"\n{'=' * 50}")
+    print(f"\n{'=' * 60}")
     print(f"  {asset} Price Prediction")
-    print(f"{'=' * 50}")
+    print(f"{'=' * 60}")
     print(f"Current Price: ${price:,.4f}")
     print(f"Generated: {result['timestamp'][:19]}")
     print()
 
-    # Predictions table
-    print(f"{'Timeframe':<12}{'Direction':<12}{'Probability':<14}{'Confidence':<12}")
-    print("-" * 50)
+    # Predictions table with enhanced columns
+    print(f"{'Timeframe':<10}{'Direction':<10}{'Prob':<8}{'Confidence':<12}{'Signals':<8}{'Agreement':<10}")
+    print("-" * 60)
 
     for tf, pred in result['predictions'].items():
         direction = pred['direction']
         prob = pred['probability']
         conf = pred['confidence']
-        print(f"{tf:<12}{direction:<12}{prob:>6.1%}{'':>7}{conf:<12}")
+        n_signals = pred.get('signals_used', 0)
+        agreement = pred.get('agreement_ratio', 0.5)
+        print(f"{tf:<10}{direction:<10}{prob:>5.1%}{'':>2}{conf:<12}{n_signals:<8}{agreement:>5.0%}")
 
     print()
-    print("Top Contributing Signals:")
-    for i, sig in enumerate(result['signals_used'][:5], 1):
+    print("Signal Analysis:")
+
+    # Handle both old format (signals_used) and new format (signals_analyzed)
+    signals = result.get('signals_analyzed', result.get('signals_used', []))
+
+    for i, sig in enumerate(signals[:7], 1):
         name = sig['name']
-        direction = sig['direction']
-        pred = sig['prediction']
-        hr = sig['hit_rate']
-        contr = " (contrarian)" if sig['is_contrarian'] else ""
-        print(f"  {i}. {name} ({direction}) -> {pred} ({hr:.0%} hit rate{contr})")
+        # New format has 'interpretation', old has 'direction'
+        interp = sig.get('interpretation', sig.get('direction', ''))
+        pred = sig.get('prediction', '')
+        rule_type = sig.get('rule_type', '')
+        contr = " [contrarian]" if sig.get('is_contrarian', False) else ""
+
+        print(f"  {i}. {name}")
+        print(f"     Rule: {rule_type} | Interpretation: {interp}")
+        print(f"     Prediction: {pred}{contr}")
+
+        # Show additional metrics if available
+        if 'current_ic' in sig:
+            ic = sig['current_ic']
+            hr = sig.get('effective_hit_rate', sig.get('hit_rate', 0))
+            lag = sig.get('best_lag', 0)
+            print(f"     IC: {ic:.4f} | Hit Rate: {hr:.0%} | Best Lag: {lag} periods")
 
     print()
 

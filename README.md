@@ -242,6 +242,81 @@ Weighted combination of all metrics:
 
 Note: Effective hit rate = `max(hit_rate, 1 - hit_rate)`, so both direct (>50%) and contrarian (<50%) signals are properly valued.
 
+## Price Prediction
+
+The `predict_price.py` tool generates directional predictions for 1h, 12h, and 24h timeframes.
+
+### Prediction Workflow
+
+```
+Raw Data (6 API metrics)
+    ↓
+Signal Computation (15 signals)
+    ↓
+Signal Evaluation (IC, hit rate, Granger, lead-lag)
+    ↓
+Top N Signal Selection (by composite score, Granger-filtered)
+    ↓
+Per-Signal Interpretation (config-driven rules)
+    ↓
+Timeframe Weighting (Gaussian by best_lag)
+    ↓
+Weighted Aggregation → Final Probability
+```
+
+### Signal Interpretation
+
+Each signal type has a specific interpretation rule defined in `signal_eval/config.py`. The rules determine how to convert current signal values into bullish/bearish predictions.
+
+| Type | Logic | Example |
+|------|-------|---------|
+| `threshold_contrarian` | Bullish below X, bearish above Y | RSI: <30 bullish, >70 bearish |
+| `zscore_contrarian` | Extreme z-scores predict reversal | funding_zscore: \|z\|>2 = contrarian |
+| `momentum_directional` | Trend-following over lookback window | borrow_momentum: positive = bullish |
+| `level` | Simple threshold comparison | borrow_repay_ratio: >1 bullish |
+| `level_with_extremes` | Directional normally, contrarian at extremes | funding_rate |
+
+### Timeframe Matching
+
+Signals are weighted by how well their optimal prediction horizon (`best_lag` from lead-lag analysis) matches each timeframe:
+
+- Signal with `best_lag=12` (1 hour) → high weight for 1h prediction, low for 24h
+- Gaussian weighting: `exp(-0.5 * ((best_lag - target) / sigma)^2)`
+- Signals with <1% relevance are excluded from that timeframe
+
+### Confidence Calculation
+
+Confidence is derived from **signal agreement**, not probability:
+
+| Factor | Description |
+|--------|-------------|
+| Agreement Ratio | % of weighted votes for majority direction (0.5-1.0) |
+| Sample Size | Number of contributing signals (penalized if <5) |
+| Confidence Score | Combined: `(agreement - 0.5) * 2 * 0.7 + sample_factor * 0.3` |
+
+Labels: Very Low (<0.2), Low (<0.4), Medium (<0.6), High (<0.8), Very High (≥0.8)
+
+### Customizing Signal Rules
+
+Edit `config.json` or modify `signal_eval/config.py` to adjust interpretation rules:
+
+```json
+{
+  "signal_rules": {
+    "rsi_raw": {
+      "type": "threshold_contrarian",
+      "bullish_below": 30,
+      "bearish_above": 70
+    },
+    "borrow_momentum": {
+      "type": "momentum_directional",
+      "lookback": 12,
+      "invert": false
+    }
+  }
+}
+```
+
 ## Interactive Report
 
 The HTML report includes:
@@ -273,10 +348,11 @@ calmcrypto/
 ├── fetch.py               # Minimal API wrapper
 ├── calmcrypto_plot.py     # Original visualization script
 ├── signal_eval/           # Signal evaluation package
-│   ├── config.py          # Configuration management
+│   ├── config.py          # Configuration + signal rules
 │   ├── data_fetcher.py    # Data fetching + demo mode
 │   ├── signals.py         # Signal definitions
 │   ├── evaluator.py       # Main evaluation engine
+│   ├── interpreters.py    # Signal interpretation for prediction
 │   ├── output.py          # CSV output handling
 │   ├── report.py          # HTML report generation
 │   ├── loader.py          # Load from existing CSVs

@@ -73,6 +73,13 @@ def register_predict_price(local_mcp_instance, csv_dir, requests_dir):
 
             # Build human-readable response
             preds = result['predictions']
+
+            def fmt_pred(p):
+                """Format prediction row with optional new fields."""
+                signals = p.get('signals_used', '-')
+                agreement = p.get('agreement_ratio', 0.5)
+                return f"{p['direction']:<9} | {p['probability']:>6.1%}      | {p['confidence']:<12} | {signals:<3} | {agreement:>5.0%}"
+
             response = f"""Prediction for {result['asset']}
 
 File: {filename}
@@ -80,17 +87,23 @@ Current Price: ${result['current_price']:,.4f}
 Generated: {result['timestamp'][:19]}
 
 Predictions:
-| Timeframe | Direction | Probability | Confidence |
-|-----------|-----------|-------------|------------|
-| 1h        | {preds['1h']['direction']:<9} | {preds['1h']['probability']:>6.1%}      | {preds['1h']['confidence']:<12} |
-| 12h       | {preds['12h']['direction']:<9} | {preds['12h']['probability']:>6.1%}      | {preds['12h']['confidence']:<12} |
-| 24h       | {preds['24h']['direction']:<9} | {preds['24h']['probability']:>6.1%}      | {preds['24h']['confidence']:<12} |
+| Timeframe | Direction | Probability | Confidence   | Sig | Agreement |
+|-----------|-----------|-------------|--------------|-----|-----------|
+| 1h        | {fmt_pred(preds['1h'])} |
+| 12h       | {fmt_pred(preds['12h'])} |
+| 24h       | {fmt_pred(preds['24h'])} |
 
-Top Contributing Signals:
+Signal Analysis:
 """
-            for i, sig in enumerate(result['signals_used'][:5], 1):
-                contr = " (contrarian)" if sig['is_contrarian'] else ""
-                response += f"  {i}. {sig['name']} ({sig['direction']}) -> {sig['prediction']} ({sig['hit_rate']:.0%} hit rate{contr})\n"
+            # Handle both old (signals_used) and new (signals_analyzed) formats
+            signals = result.get('signals_analyzed', result.get('signals_used', []))
+            for i, sig in enumerate(signals[:5], 1):
+                contr = " [contrarian]" if sig.get('is_contrarian', False) else ""
+                interp = sig.get('interpretation', sig.get('direction', ''))
+                rule = sig.get('rule_type', 'unknown')
+                pred = sig.get('prediction', '')
+                response += f"  {i}. {sig['name']} ({rule})\n"
+                response += f"     Interpretation: {interp} -> {pred}{contr}\n"
 
             response += f"""
 Python snippet to load:
