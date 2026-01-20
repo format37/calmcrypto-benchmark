@@ -25,6 +25,7 @@ from calmcrypto_tools import (
     register_benchmark_all_assets,
     register_signal_eval,
     register_predict_price,
+    register_market_briefing,
 )
 
 load_dotenv(".env")
@@ -58,6 +59,7 @@ register_list_assets(mcp, CSV_DIR, REQUESTS_DIR)
 register_benchmark_all_assets(mcp, CSV_DIR, REQUESTS_DIR)
 register_signal_eval(mcp, CSV_DIR, REQUESTS_DIR)
 register_predict_price(mcp, CSV_DIR, REQUESTS_DIR)
+register_market_briefing(mcp, CSV_DIR, REQUESTS_DIR)
 
 # Register utility tools
 register_py_eval(mcp, CSV_DIR, REQUESTS_DIR)
